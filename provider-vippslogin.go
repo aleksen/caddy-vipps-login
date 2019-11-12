@@ -15,6 +15,8 @@
 package vippslogin
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -42,6 +44,9 @@ type VippsLogin struct {
 	ClientID     string `json:"client_id,omitempty"`
 	ClientSecret string `json:"client_secret,omitempty"`
 	RedirectURL  string `json:"redirect_url,omitempty"`
+	SigningKey   string `json:"signing_key,omitempty"`
+
+	signingKey []byte
 }
 
 // CaddyModule returns the Caddy module information.
@@ -57,6 +62,16 @@ func (vl *VippsLogin) Provision(ctx caddy.Context) error {
 	if vl.Root == "" {
 		vl.Root = "{http.vars.root}"
 	}
+
+	var err error
+	vl.signingKey, err = base64.StdEncoding.DecodeString(vl.SigningKey)
+	if err != nil {
+		return fmt.Errorf("secret_key is not a base64 string: %w", err)
+	}
+	if len(vl.signingKey) != sha256.BlockSize {
+		return fmt.Errorf("secret_key must be a %d byte long base64 string, was %d", sha256.BlockSize, len(vl.signingKey))
+	}
+	vl.SigningKey = ""
 	return nil
 }
 
@@ -133,9 +148,17 @@ func (vl VippsLogin) handleRedir(w http.ResponseWriter, r *http.Request) (caddya
 		return caddyauth.User{}, false, err
 	}
 
+	phoneNumberBytes := []byte(ui.PhoneNumber)
+	phoneBase64 := base64.StdEncoding.EncodeToString(phoneNumberBytes)
+	mac := hmac.New(sha256.New, vl.signingKey)
+	mac.Write(phoneNumberBytes)
+	computedMAC := mac.Sum(nil)
+	macBase64 := base64.StdEncoding.EncodeToString(computedMAC)
+	cookieValue := phoneBase64 + "." + macBase64
+
 	http.SetCookie(w, &http.Cookie{
 		Name:    "vipps-login-user",
-		Value:   ui.PhoneNumber,
+		Value:   cookieValue,
 		Expires: time.Now().AddDate(0, 0, 1),
 	})
 
@@ -159,20 +182,49 @@ func (vl VippsLogin) Authenticate(w http.ResponseWriter, r *http.Request) (caddy
 	}
 	cookie, err := r.Cookie("vipps-login-user")
 	if err == http.ErrNoCookie {
-		conf := vl.oauth2conf()
-		url := conf.AuthCodeURL(base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("URL: %s", r.URL.String()))), oauth2.AccessTypeOffline)
-		http.Redirect(w, r, url, http.StatusSeeOther)
-		return caddyauth.User{}, false, nil
+		return vl.redirectToLogin(w, r)
 	} else if err != nil {
 		return caddyauth.User{}, false, err
 	}
+
+	// If we see a malformed cookie, we assume it's due to some tinkering or old
+	// version of this plugin. In that case, we'll redirect the user to the login
+	// page to reauthenticate.
+	cookieParts := strings.Split(cookie.Value, ".")
+	if len(cookieParts) != 2 {
+		return vl.redirectToLogin(w, r)
+	}
+	phoneNumberBytes, err := base64.StdEncoding.DecodeString(cookieParts[0])
+	if err != nil {
+		return vl.redirectToLogin(w, r)
+	}
+	phoneNumber := string(phoneNumberBytes)
+	fmt.Println("phoneNumber", phoneNumber)
+	actualMAC, err := base64.StdEncoding.DecodeString(cookieParts[1])
+	if err != nil {
+		return vl.redirectToLogin(w, r)
+	}
+	mac := hmac.New(sha256.New, vl.signingKey)
+	mac.Write(phoneNumberBytes)
+	expectedMAC := mac.Sum(nil)
+	if !hmac.Equal(actualMAC, expectedMAC) {
+		return vl.redirectToLogin(w, r)
+	}
+
 	for _, n := range numbers {
-		if cookie.Value == n {
-			return caddyauth.User{ID: cookie.Value}, true, nil
+		if phoneNumber == n {
+			return caddyauth.User{ID: phoneNumber}, true, nil
 		}
 	}
 	w.WriteHeader(http.StatusUnauthorized)
 	w.Write([]byte("Access denied"))
+	return caddyauth.User{}, false, nil
+}
+
+func (vl VippsLogin) redirectToLogin(w http.ResponseWriter, r *http.Request) (caddyauth.User, bool, error) {
+	conf := vl.oauth2conf()
+	url := conf.AuthCodeURL(base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("URL: %s", r.URL.String()))), oauth2.AccessTypeOffline)
+	http.Redirect(w, r, url, http.StatusSeeOther)
 	return caddyauth.User{}, false, nil
 }
 
