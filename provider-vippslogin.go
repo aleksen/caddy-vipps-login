@@ -40,11 +40,12 @@ func init() {
 
 // VippsLogin facilitates logging in using Vipps Login (https://vipps.no)
 type VippsLogin struct {
-	Root         string `json:"root,omitempty"` // default is current directory
-	ClientID     string `json:"client_id"`
-	ClientSecret string `json:"client_secret"`
-	RedirectURL  string `json:"redirect_url"`
-	SigningKey   string `json:"signing_key"`
+	Root          string `json:"root,omitempty"` // default is current directory
+	ForbiddenPage string `json:"forbidden_page,omitempty"`
+	ClientID      string `json:"client_id"`
+	ClientSecret  string `json:"client_secret"`
+	RedirectURL   string `json:"redirect_url"`
+	SigningKey    string `json:"signing_key"`
 
 	signingKey []byte
 }
@@ -226,8 +227,12 @@ func (vl VippsLogin) Authenticate(w http.ResponseWriter, r *http.Request) (caddy
 			return caddyauth.User{ID: phoneNumber}, true, nil
 		}
 	}
-	w.WriteHeader(http.StatusUnauthorized)
-	w.Write([]byte("Access denied"))
+	w.WriteHeader(http.StatusForbidden)
+	if vl.ForbiddenPage == "" {
+		w.Write([]byte("Access denied"))
+		return caddyauth.User{}, false, nil
+	}
+	http.ServeFile(w, r, vl.ForbiddenPage)
 	return caddyauth.User{}, false, nil
 }
 
