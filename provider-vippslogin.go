@@ -21,6 +21,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/url"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -77,19 +78,27 @@ func (vl VippsLogin) isRedirURL(r *http.Request) bool {
 	return strings.TrimLeft(r.URL.Path, "/") == strings.TrimLeft(redirURL.Path, "/")
 }
 
-// TODO: Replicate FileServer behaviour
+// TODO: Replicate FileServer behaviour when that changes
 func (vl VippsLogin) path(r *http.Request) string {
 	repl := r.Context().Value(caddy.ReplacerCtxKey).(caddy.Replacer)
 	root := repl.ReplaceAll(vl.Root, ".")
+	suffix := repl.ReplaceAll(r.URL.Path, "")
 	if root == "" {
 		root = "."
 	}
-	return filepath.Join(root, filepath.FromSlash(path.Clean("/"+repl.ReplaceAll(r.URL.Path, ""))))
+	return filepath.Join(root, filepath.FromSlash(path.Clean("/"+suffix)))
 }
 
 // allowedNumbers returns a slice of all allowed mobile numbers to the current request, and bool true if it's an open page
 func (vl VippsLogin) allowedNumbers(r *http.Request) ([]string, bool) {
-	accessFile := filepath.Join(filepath.Dir(vl.path(r)), ".vipps-login")
+	accessFile := filepath.Join(vl.path(r), ".vipps-login")
+	file, err := os.Lstat(vl.path(r))
+	if err != nil {
+		return []string{}, true
+	}
+	if !file.Mode().IsDir() {
+		accessFile = filepath.Join(filepath.Dir(vl.path(r)), ".vipps-login")
+	}
 	data, err := ioutil.ReadFile(accessFile)
 	if err != nil {
 		return []string{}, true
@@ -162,6 +171,8 @@ func (vl VippsLogin) Authenticate(w http.ResponseWriter, r *http.Request) (caddy
 			return caddyauth.User{ID: cookie.Value}, true, nil
 		}
 	}
+	w.WriteHeader(http.StatusUnauthorized)
+	w.Write([]byte("Access denied"))
 	return caddyauth.User{}, false, nil
 }
 
