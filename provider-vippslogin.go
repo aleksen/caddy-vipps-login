@@ -41,10 +41,10 @@ func init() {
 // VippsLogin facilitates logging in using Vipps Login (https://vipps.no)
 type VippsLogin struct {
 	Root         string `json:"root,omitempty"` // default is current directory
-	ClientID     string `json:"client_id,omitempty"`
-	ClientSecret string `json:"client_secret,omitempty"`
-	RedirectURL  string `json:"redirect_url,omitempty"`
-	SigningKey   string `json:"signing_key,omitempty"`
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+	RedirectURL  string `json:"redirect_url"`
+	SigningKey   string `json:"signing_key"`
 
 	signingKey []byte
 }
@@ -61,6 +61,16 @@ func (VippsLogin) CaddyModule() caddy.ModuleInfo {
 func (vl *VippsLogin) Provision(ctx caddy.Context) error {
 	if vl.Root == "" {
 		vl.Root = "{http.vars.root}"
+	}
+
+	if vl.ClientID == "" {
+		return fmt.Errorf("client_id cannot be empty")
+	}
+	if vl.ClientSecret == "" {
+		return fmt.Errorf("client_secret cannot be empty")
+	}
+	if vl.RedirectURL == "" {
+		return fmt.Errorf("redirect_url cannot be empty")
 	}
 
 	var err error
