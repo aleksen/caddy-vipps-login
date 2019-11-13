@@ -20,7 +20,8 @@ Add an authentication handler to your caddy 2 json config:
 		  "redirect_url":"https://yourdomain.com/a-unique-url",
 		  "root": "/same/directory/as/webserver/files",
 		  "signing_key": "64 bytes base64 encoded key you generate yourself",
-		  "forbidden_page": "/url/to/forbidden.html"
+		  "forbidden_page": "/url/to/forbidden.html",
+		  "session_duration": "duration of a session, in Go's time duration format"
 		}
 	}
   },

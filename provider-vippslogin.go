@@ -26,15 +26,19 @@ func init() {
 
 // VippsLogin facilitates logging in using Vipps Login (https://vipps.no)
 type VippsLogin struct {
-	Root          string `json:"root,omitempty"` // default is current directory
-	ForbiddenPage string `json:"forbidden_page,omitempty"`
-	ClientID      string `json:"client_id"`
-	ClientSecret  string `json:"client_secret"`
-	RedirectURL   string `json:"redirect_url"`
-	SigningKey    string `json:"signing_key"`
+	Root            string `json:"root,omitempty"` // default is current directory
+	ForbiddenPage   string `json:"forbidden_page,omitempty"`
+	SessionDuration string `json:"session_duration,omitempty"`
+	ClientID        string `json:"client_id"`
+	ClientSecret    string `json:"client_secret"`
+	RedirectURL     string `json:"redirect_url"`
+	SigningKey      string `json:"signing_key"`
 
-	signingKey []byte
+	signingKey      []byte
+	sessionDuration time.Duration
 }
+
+const defaultSessionDuration = 24 * time.Hour
 
 // CaddyModule returns the Caddy module information.
 func (VippsLogin) CaddyModule() caddy.ModuleInfo {
@@ -58,6 +62,15 @@ func (vl *VippsLogin) Provision(ctx caddy.Context) error {
 	}
 	if vl.RedirectURL == "" {
 		return fmt.Errorf("redirect_url cannot be empty")
+	}
+
+	vl.sessionDuration = defaultSessionDuration
+	if vl.SessionDuration != "" {
+		var err error
+		vl.sessionDuration, err = time.ParseDuration(vl.SessionDuration)
+		if err != nil {
+			return fmt.Errorf("session_duration is not a valid duration: %w", err)
+		}
 	}
 
 	var err error
@@ -149,14 +162,25 @@ func (vl VippsLogin) handleRedir(w http.ResponseWriter, r *http.Request) (caddya
 	phoneBase64 := base64.StdEncoding.EncodeToString(phoneNumberBytes)
 	mac := hmac.New(sha256.New, vl.signingKey)
 	mac.Write(phoneNumberBytes)
+
+	mac.Write([]byte{'.'})
+
+	expiryDate := time.Now().Add(vl.sessionDuration)
+	expiryDateBytes, err := expiryDate.MarshalBinary()
+	if err != nil {
+		return caddyauth.User{}, false, err
+	}
+	expiryDateBase64 := base64.StdEncoding.EncodeToString(expiryDateBytes)
+	mac.Write([]byte(expiryDateBytes))
+
 	computedMAC := mac.Sum(nil)
 	macBase64 := base64.StdEncoding.EncodeToString(computedMAC)
-	cookieValue := phoneBase64 + "." + macBase64
+	cookieValue := phoneBase64 + "." + expiryDateBase64 + "." + macBase64
 
 	http.SetCookie(w, &http.Cookie{
 		Name:    "vipps-login-user",
 		Value:   cookieValue,
-		Expires: time.Now().AddDate(0, 0, 1),
+		Expires: expiryDate,
 	})
 
 	state, err := base64.StdEncoding.DecodeString(r.FormValue("state"))
@@ -188,7 +212,7 @@ func (vl VippsLogin) Authenticate(w http.ResponseWriter, r *http.Request) (caddy
 	// version of this plugin. In that case, we'll redirect the user to the login
 	// page to reauthenticate.
 	cookieParts := strings.Split(cookie.Value, ".")
-	if len(cookieParts) != 2 {
+	if len(cookieParts) != 3 {
 		return vl.redirectToLogin(w, r)
 	}
 	phoneNumberBytes, err := base64.StdEncoding.DecodeString(cookieParts[0])
@@ -196,13 +220,28 @@ func (vl VippsLogin) Authenticate(w http.ResponseWriter, r *http.Request) (caddy
 		return vl.redirectToLogin(w, r)
 	}
 	phoneNumber := string(phoneNumberBytes)
-	fmt.Println("phoneNumber", phoneNumber)
-	actualMAC, err := base64.StdEncoding.DecodeString(cookieParts[1])
+
+	timeBytes, err := base64.StdEncoding.DecodeString(cookieParts[1])
+	if err != nil {
+		return vl.redirectToLogin(w, r)
+	}
+	var expiryDate time.Time
+	err = expiryDate.UnmarshalBinary(timeBytes)
+	if err != nil {
+		return vl.redirectToLogin(w, r)
+	}
+	if time.Now().After(expiryDate) {
+		return vl.redirectToLogin(w, r)
+	}
+
+	actualMAC, err := base64.StdEncoding.DecodeString(cookieParts[2])
 	if err != nil {
 		return vl.redirectToLogin(w, r)
 	}
 	mac := hmac.New(sha256.New, vl.signingKey)
 	mac.Write(phoneNumberBytes)
+	mac.Write([]byte{'.'})
+	mac.Write(timeBytes)
 	expectedMAC := mac.Sum(nil)
 	if !hmac.Equal(actualMAC, expectedMAC) {
 		return vl.redirectToLogin(w, r)
