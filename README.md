@@ -1,4 +1,4 @@
-caddy-vipps-login has been tested on Linux.
+caddy-vipps-login has been tested on Linux, but is in no way production ready!
 
 # Building
 
