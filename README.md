@@ -22,7 +22,7 @@ Add an authentication handler to your caddy 2 json config:
 		  "forbidden_page": "/url/to/forbidden.html"
 		}
 	}
-  },```
+  },
 
 To protect a directory you can now create a .vipps-login file with one phonenumber per line (remember the 47 country prefix).
 
