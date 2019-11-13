@@ -10,7 +10,8 @@ caddy-vipps-login has been tested on Linux.
 
 Add an authentication handler to your caddy 2 json config:
 
-```{
+```
+   {
 	"handler": "authentication",
 	"providers": {
 	  "vipps_login": {
