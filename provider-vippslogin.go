@@ -43,7 +43,7 @@ const defaultSessionDuration = 24 * time.Hour
 // CaddyModule returns the Caddy module information.
 func (VippsLogin) CaddyModule() caddy.ModuleInfo {
 	return caddy.ModuleInfo{
-		Name: "http.handlers.authentication.providers.vipps_login",
+		ID: "http.handlers.authentication.providers.vipps_login",
 		New:  func() caddy.Module { return new(VippsLogin) },
 	}
 }
